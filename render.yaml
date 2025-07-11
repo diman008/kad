@@ -1,15 +1,1 @@
-from flask import Flask, request, jsonify
-import requests as rq
-from bs4 import BeautifulSoup
-
-app = Flask(__name__)
-
-@app.route('/kad/search')
-services:
-  - type: web
-    name: kad-proxy
-    env: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
-    healthCheckPath: /kad/search?q=ping
+startCommand: python app.py
