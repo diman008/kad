@@ -1,3 +1,4 @@
+print("Using ScraperAPI, key starts with:", (os.getenv("SCRAPER_API") or "None")[:4])
 import os
 import json
 import requests as rq
