@@ -1,14 +1,12 @@
 # ---------- app.py ----------
 """
-Мини-прокси к КАД Арбитр
-  • /kad/search   – поиск дел по ключевым словам
-  • /kad/details  – карточка конкретного дела
+KAD-proxy:   /kad/search   и   /kad/details
 
-Если КАД отвечает 451/403 (блокировка зарубежного IP),
-код автоматически пробует тот же запрос через ScraperAPI
-(нужен API-key и country_code=ru).
+• Сначала пытается обращаться к КАД напрямую.
+• Если получает 451/403 → повторяет запрос через ScraperAPI (RU-гео)
+  c опцией forward_method=true – бесплатный тариф это допускает.
 """
-import os, time, json, requests
+import os, time, json, requests, urllib.parse as up
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
@@ -21,34 +19,31 @@ HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
 }
 
-SCRAPER_KEY = os.getenv("SCRAPER_API")      # задайте в Render → Environment
+SCRAPER_KEY = os.getenv("SCRAPER_API")        # добавьте в Render → Env Vars
 SCRAPER_URL = "https://api.scraperapi.com/"
 
-# ------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def kad_request(payload: dict) -> dict:
-    """POST в КАД, fallback на ScraperAPI при 451/403."""
-    def _post_direct() -> requests.Response:
-        return requests.post(KAD_URL, json=payload,
-                             headers=HEADERS, timeout=45)
+    """POST в КАД; если 451/403 – fallback через ScraperAPI (RU)."""
+    # 1) прямой запрос
+    resp = requests.post(KAD_URL, json=payload, headers=HEADERS, timeout=45)
 
-    # 1. пытаемся напрямую
-    resp = _post_direct()
     if resp.status_code in (451, 403) and SCRAPER_KEY:
-        params = {
-            "api_key": SCRAPER_KEY,
-            "url": KAD_URL,
-            "method": "POST",
-            "country_code": "ru",
-            "render": "false",
-            "headers": json.dumps(HEADERS),
-            "body": json.dumps(payload),
-        }
-        resp = requests.get(SCRAPER_URL, params=params, timeout=60)
+        proxy_url = (
+            f"{SCRAPER_URL}"
+            f"?api_key={SCRAPER_KEY}"
+            f"&url={up.quote(KAD_URL, safe='')}"
+            f"&country_code=ru"
+            f"&forward_method=true"      # пробросить исходный POST
+            f"&forward_headers=true"
+            f"&render=false"
+        )
+        resp = requests.post(proxy_url, json=payload, headers=HEADERS, timeout=60)
 
-    resp.raise_for_status()           # если всё ещё 4xx/5xx → исключение
+    resp.raise_for_status()              # 4xx/5xx → исключение
     return resp.json()
 
-# ------------------------------------------------------------------
+# ----------------------------------------------------------------------
 @app.get("/kad/search", tags=["KAD"])
 def search_kad_cases(
     q: str = Query(..., description="Ключевые слова, статья, ИНН, ФИО"),
@@ -77,19 +72,19 @@ def search_kad_cases(
     ]
     return JSONResponse({"results": results})
 
-# ------------------------------------------------------------------
+# ----------------------------------------------------------------------
 @app.get("/kad/details", tags=["KAD"])
 def get_kad_case_details(
     caseNumber: str = Query(..., description="Номер дела, напр. А40-5001/2022")
 ):
     return kad_request({"CaseNumber": caseNumber})
 
-# ------------------------------------------------------------------
+# ----------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "app:app",
         host="0.0.0.0",
         port=int(os.getenv("PORT", 8000)),
-        reload=True
+        reload=True,
     )
