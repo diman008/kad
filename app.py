@@ -1,11 +1,7 @@
-# ---------- app.py  ----------
-# Мини-прокси к КАД Арбитр: два маршрута
-#   • /kad/search   – поиск дел по ключевым словам
-#   • /kad/details  – карточка конкретного дела
-# Работает без ключей, только requests.
+# ---------- app.py ----------
+# Простой прокси к КАД Арбитр
 
-import time
-import requests
+import time, requests, os
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
@@ -17,62 +13,55 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# ------------------------------------------------------------
+# ------------------ вспомогательная функция ------------------
 def kad_request(payload: dict) -> dict:
-    """POST в КАД с 3 попытками и 45-сек таймаутом."""
+    """POST в КАД с 3 попытками и таймаутом 45 с."""
     for attempt in range(3):
         try:
             r = requests.post(KAD_ENDPOINT, json=payload,
                               headers=HEADERS, timeout=45)
             r.raise_for_status()
-            return r.json()        # ValueError -> except
+            return r.json()
         except Exception as e:
             if attempt == 2:
                 raise RuntimeError(f"KAD error: {e}") from e
-            time.sleep(2 * (attempt + 1))   # 2, 4 c задержка и повтор
+            time.sleep(2 * (attempt + 1))
 
-# ------------------------------------------------------------
-@app.get("/kad/search", tags=["KAD"], methods=["GET", "HEAD"])
+# ------------------------- /kad/search -----------------------
+@app.get("/kad/search", tags=["KAD"])
 def search_kad_cases(
     q: str = Query(..., description="Ключевые слова"),
     page: int = Query(1, ge=1, description="Номер страницы")
 ):
-    """Поиск арбитражных дел по тексту (статья, ИНН, ФИО…)."""
     payload = {
         "Page": page,
         "Count": 20,
         "Text": q,
         "CaseNumber": "",
-        "Sides": [],
-        "Judges": [],
+        "Sides": [], "Judges": [],
         "WithVKSInstances": True,
         "WithoutVKSInstances": False
     }
-
     raw = kad_request(payload)
-    rows = raw.get("Instances", [])           # <-- актуальный ключ!
-
+    rows = raw.get("Instances", [])          # актуальный ключ
     results = [{
-        "case":   row.get("CaseNumber"),
-        "link":   f'https://kad.arbitr.ru/Card/{row.get("CaseId")}',
-        "court":  row.get("CourtName"),
-        "date":   row.get("Date")
+        "case":  row.get("CaseNumber"),
+        "link":  f'https://kad.arbitr.ru/Card/{row.get("CaseId")}',
+        "court": row.get("CourtName"),
+        "date":  row.get("Date")
     } for row in rows]
-
     return JSONResponse({"results": results})
 
-# ------------------------------------------------------------
-@app.get("/kad/details", tags=["KAD"], methods=["GET", "HEAD"])
+# ------------------------ /kad/details -----------------------
+@app.get("/kad/details", tags=["KAD"])
 def get_kad_case_details(
     caseNumber: str = Query(..., description="Номер дела А40-…/2024")
 ):
-    """Возвращает «сырую» карточку дела из КАД."""
     return kad_request({"CaseNumber": caseNumber})
 
-# ------------------------------------------------------------
-# Локальный запуск: uvicorn app:app --reload
+# ------------------- локальный запуск -----------------------
 if __name__ == "__main__":
-    import uvicorn, os
+    import uvicorn
     uvicorn.run("app:app",
                 host="0.0.0.0",
                 port=int(os.getenv("PORT", 8000)),
